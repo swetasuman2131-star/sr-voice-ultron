@@ -11,6 +11,11 @@ and say it in the right VOICE. It is two factors in one action:
 You enrol once (say the sentence a few times). After that the lock stays
 shut unless a recording matches BOTH the words and the voice.
 
+Liveness (optional, on by default in the GUI and via --challenge on the CLI):
+the lock shows a random 3-digit code and asks you to say your passphrase
+followed by those digits. A replayed recording of a past unlock cannot know a
+fresh code, so this defeats simple replay attacks.
+
 Author: The new developer SR
 
 This is a personal prototype, not a security product. See README.md for the
@@ -18,12 +23,13 @@ honest limits of voice biometrics.
 
 Commands
 --------
-    python sr_voice_ultron.py enroll          # set up your voice + sentence
-    python sr_voice_ultron.py unlock          # try to open the lock
-    python sr_voice_ultron.py status          # show what is stored
+    python sr_voice_ultron.py enroll                # set up your voice + sentence
+    python sr_voice_ultron.py unlock                # try to open the lock
+    python sr_voice_ultron.py unlock --challenge    # + random anti-replay code
+    python sr_voice_ultron.py status                # show what is stored
     python sr_voice_ultron.py enroll --from-file samples.wav
     python sr_voice_ultron.py unlock --from-file test.wav
-    python sr_voice_ultron.py gui             # simple on-screen lock (Tkinter)
+    python sr_voice_ultron.py gui                   # simple on-screen lock (Tkinter)
 
 Test without a microphone by passing --from-file <wav> (16 kHz mono WAV).
 """
@@ -34,6 +40,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from difflib import SequenceMatcher
@@ -60,6 +67,16 @@ DEFAULT_TEXT_THRESHOLD = 0.80
 
 # How long to record for (seconds).
 DEFAULT_RECORD_SECONDS = 4.0
+
+# Liveness challenge length (number of digits).
+DEFAULT_CODE_LEN = 3
+
+# Words an ASR engine may output for spoken digits.
+DIGIT_WORDS = {
+    "zero": "0", "oh": "0", "o": "0",
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9",
+}
 
 
 # --------------------------------------------------------------------------
@@ -93,6 +110,43 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return float(np.dot(a, b) / (na * nb))
+
+
+# --------------------------------------------------------------------------
+# Liveness helpers (challenge-response)
+# --------------------------------------------------------------------------
+
+def random_code(length: int = DEFAULT_CODE_LEN) -> str:
+    """A fresh random digit code - the 'say this now' liveness challenge."""
+    return "".join(secrets.choice("0123456789") for _ in range(length))
+
+
+def extract_digits(text: str) -> str:
+    """Pull the digit sequence out of a transcript ('four seven one' -> '471')."""
+    out = []
+    for tok in normalize_text(text).split():
+        if tok.isdigit():
+            out.append(tok)
+        elif tok in DIGIT_WORDS:
+            out.append(DIGIT_WORDS[tok])
+    return "".join(out)
+
+
+def strip_digits(text: str) -> str:
+    """Remove spoken/numeric digits, leaving the passphrase part of a transcript."""
+    keep = [t for t in normalize_text(text).split()
+            if not t.isdigit() and t not in DIGIT_WORDS]
+    return " ".join(keep)
+
+
+def code_matches(transcript: str, code: str) -> bool:
+    """True if the challenge digits appear, in order, in the transcript.
+
+    Subsequence matching tolerates an ASR engine inserting an extra digit word.
+    """
+    digits = extract_digits(transcript)
+    it = iter(digits)
+    return all(ch in it for ch in code)
 
 
 # --------------------------------------------------------------------------
@@ -296,6 +350,20 @@ def cmd_enroll(args) -> int:
     return 0
 
 
+def _decide(voice_score, text_score, code_ok, voice_th, text_th, challenge):
+    """Return (unlocked, message)."""
+    if voice_score >= voice_th and text_score >= text_th and code_ok:
+        return True, "UNLOCKED - sentence, voice and liveness all match."
+    if challenge and not code_ok:
+        return False, ("STILL LOCKED - the liveness code was not heard. "
+                       "A recording of a past unlock cannot pass this.")
+    if text_score >= text_th and voice_score < voice_th:
+        return False, "STILL LOCKED - right words, but that is not the enrolled voice."
+    if voice_score >= voice_th and text_score < text_th:
+        return False, "STILL LOCKED - right voice, wrong sentence."
+    return False, "STILL LOCKED - neither the sentence nor the voice matched."
+
+
 def cmd_unlock(args) -> int:
     vault = load_vault()
     if vault is None:
@@ -304,8 +372,14 @@ def cmd_unlock(args) -> int:
 
     voice_th = args.voice_threshold
     text_th = args.text_threshold
+    challenge = None
 
     print("Lock is LOCKED. Speak your passphrase to open it.")
+    if getattr(args, "challenge", False):
+        challenge = random_code(DEFAULT_CODE_LEN)
+        print(f'  LIVENESS: after your passphrase, say these digits: '
+              f'{" ".join(challenge)}')
+
     audio = get_audio(args)
 
     print("  Checking your voice ...")
@@ -314,27 +388,29 @@ def cmd_unlock(args) -> int:
 
     print("  Checking your words ...")
     said = transcribe_audio(audio)
-    text_score = text_similarity(said, vault["meta"]["passphrase"])
+    if challenge:
+        spoken_phrase = strip_digits(said)
+        code_ok = code_matches(said, challenge)
+    else:
+        spoken_phrase = said
+        code_ok = True
+    text_score = text_similarity(spoken_phrase, vault["meta"]["passphrase"])
 
-    voice_ok = voice_score >= voice_th
-    text_ok = text_score >= text_th
+    unlocked, message = _decide(voice_score, text_score, code_ok,
+                                voice_th, text_th, challenge)
 
     print("\n--- result ---")
     print(f'  heard          : "{said}"')
     print(f'  expected       : "{vault["meta"]["passphrase"]}"')
-    print(f"  voice match    : {voice_score:.3f}  (need >= {voice_th:.2f})  {'OK' if voice_ok else 'no'}")
-    print(f"  sentence match : {text_score:.3f}  (need >= {text_th:.2f})  {'OK' if text_ok else 'no'}")
-
-    if voice_ok and text_ok:
-        print("\n  UNLOCKED - sentence and voice both match.")
-        return 0
-    if text_ok and not voice_ok:
-        print("\n  STILL LOCKED - right words, but that is not the enrolled voice.")
-    elif voice_ok and not text_ok:
-        print("\n  STILL LOCKED - right voice, wrong sentence.")
-    else:
-        print("\n  STILL LOCKED - neither the sentence nor the voice matched.")
-    return 2
+    print(f"  voice match    : {voice_score:.3f}  (need >= {voice_th:.2f})  "
+          f"{'OK' if voice_score >= voice_th else 'no'}")
+    print(f"  sentence match : {text_score:.3f}  (need >= {text_th:.2f})  "
+          f"{'OK' if text_score >= text_th else 'no'}")
+    if challenge:
+        print(f"  liveness code  : expected {challenge}, heard "
+              f"{extract_digits(said) or '(none)'}  {'OK' if code_ok else 'no'}")
+    print("\n  " + message)
+    return 0 if unlocked else 2
 
 
 def cmd_status(args) -> int:
@@ -368,22 +444,21 @@ def cmd_gui(args) -> int:
 
     root = tk.Tk()
     root.title("SR Voice Ultron")
-    root.geometry("440x320")
+    root.geometry("460x360")
     root.configure(bg="#12161c")
 
-    state = {"unlocked": False}
     status_var = tk.StringVar(value="LOCKED")
     detail_var = tk.StringVar(value="Press 'Unlock' and speak your passphrase.")
+    challenge_var = tk.BooleanVar(value=True)
 
     tk.Label(root, text="SR Voice Ultron", fg="#7fd1ff", bg="#12161c",
-             font=("Helvetica", 20, "bold")).pack(pady=(18, 0))
+             font=("Helvetica", 20, "bold")).pack(pady=(16, 0))
     tk.Label(root, textvariable=status_var, fg="#ff6b6b", bg="#12161c",
-             font=("Helvetica", 26, "bold")).pack(pady=10)
+             font=("Helvetica", 26, "bold")).pack(pady=8)
     tk.Label(root, textvariable=detail_var, fg="#9aa4b2", bg="#12161c",
-             font=("Helvetica", 11), wraplength=380).pack(pady=4)
+             font=("Helvetica", 11), wraplength=400, justify="center").pack(pady=4)
 
     def set_state(unlocked, detail):
-        state["unlocked"] = unlocked
         status_var.set("UNLOCKED" if unlocked else "LOCKED")
         detail_var.set(detail)
         color = "#4ade80" if unlocked else "#ff6b6b"
@@ -395,8 +470,12 @@ def cmd_gui(args) -> int:
         if not load_vault():
             messagebox.showinfo("SR Voice Ultron", "No enrolment yet. Please enrol first.")
             return
+        challenge = random_code(DEFAULT_CODE_LEN) if challenge_var.get() else None
         btn.config(state="disabled")
-        detail_var.set("Listening ...")
+        if challenge:
+            detail_var.set(f'Speak your passphrase, then say: {" ".join(challenge)}')
+        else:
+            detail_var.set("Listening ...")
 
         def work():
             try:
@@ -405,10 +484,16 @@ def cmd_gui(args) -> int:
                 vault = load_vault()
                 vs = cosine_similarity(probe, vault["mean"])
                 said = transcribe_audio(audio)
-                ts = text_similarity(said, vault["meta"]["passphrase"])
-                ok = vs >= args.voice_threshold and ts >= args.text_threshold
-                root.after(0, lambda: set_state(
-                    ok, f'heard "{said}"\nvoice {vs:.2f} . sentence {ts:.2f}'))
+                if challenge:
+                    ts = text_similarity(strip_digits(said), vault["meta"]["passphrase"])
+                    code_ok = code_matches(said, challenge)
+                else:
+                    ts = text_similarity(said, vault["meta"]["passphrase"])
+                    code_ok = True
+                ok, msg = _decide(vs, ts, code_ok, args.voice_threshold,
+                                  args.text_threshold, challenge)
+                root.after(0, lambda: set_state(ok, f'{msg}\nvoice {vs:.2f} . '
+                                                       f'sentence {ts:.2f}'))
             except Exception as exc:  # keep the GUI alive
                 root.after(0, lambda: set_state(False, f"Error: {exc}"))
             finally:
@@ -438,10 +523,14 @@ def cmd_gui(args) -> int:
     btn = tk.Button(root, text="Unlock", command=do_unlock,
                     bg="#2563eb", fg="white", font=("Helvetica", 13, "bold"),
                     relief="flat", padx=24, pady=8)
-    btn.pack(pady=14)
+    btn.pack(pady=12)
+    tk.Checkbutton(root, text="Liveness code (anti-replay)", variable=challenge_var,
+                   bg="#12161c", fg="#cbd5e1", selectcolor="#1f2937",
+                   activebackground="#12161c", activeforeground="#cbd5e1",
+                   font=("Helvetica", 10)).pack()
     tk.Button(root, text="Enrol voice", command=do_enroll,
               bg="#1f2937", fg="#cbd5e1", font=("Helvetica", 11),
-              relief="flat", padx=14, pady=4).pack()
+              relief="flat", padx=14, pady=4).pack(pady=6)
 
     root.mainloop()
     return 0
@@ -472,6 +561,8 @@ def build_parser() -> argparse.ArgumentParser:
     e.set_defaults(func=cmd_enroll)
 
     u = sub.add_parser("unlock", parents=[common], help="try to open the lock")
+    u.add_argument("--challenge", action="store_true",
+                   help="ask for a random digit code after the passphrase (anti-replay)")
     u.set_defaults(func=cmd_unlock)
 
     s = sub.add_parser("status", help="show what is stored")

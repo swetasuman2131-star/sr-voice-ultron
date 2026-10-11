@@ -75,14 +75,33 @@ You get a clear verdict:
 If the words are right but the voice is someone else's, it stays **LOCKED** and
 tells you why - that is the whole point of the design.
 
+### Liveness (anti-replay)
+
+A recording of you saying the passphrase could be played back to fool a plain
+voice lock. To block that, add `--challenge`:
+
+```bash
+python sr_voice_ultron.py unlock --challenge
+```
+
+The lock shows a random 3-digit code and asks you to say your passphrase
+followed by those digits:
+
+```
+  LIVENESS: after your passphrase, say these digits: 4 7 1
+```
+
+A replayed clip cannot know a fresh code, so it fails the liveness check and
+the lock stays shut. The GUI has this switched on by default.
+
 ### On-screen lock (optional)
 
 ```bash
 python sr_voice_ultron.py gui
 ```
 
-A small window with a big LOCKED/UNLOCKED indicator and *Unlock* / *Enrol*
-buttons.
+A small window with a big LOCKED/UNLOCKED indicator, *Unlock* / *Enrol*
+buttons, and a "Liveness code" checkbox (on by default).
 
 ### Check what is stored
 
@@ -135,9 +154,11 @@ python sr_voice_ultron.py unlock --voice-threshold 0.85 --text-threshold 0.90
    several of these into one reference vector.
 3. **Words** - [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
    transcribes the clip offline.
-4. **Decision** - the lock opens only if `cosine(voiceprint, reference)` clears
-   the voice threshold **and** the transcript is close enough to the
-   passphrase. Both must pass.
+4. **Liveness** (with `--challenge`) - a fresh random digit code is shown and
+   must be spoken after the passphrase. A replayed recording cannot know it.
+5. **Decision** - the lock opens only if `cosine(voiceprint, reference)` clears
+   the voice threshold **and** the transcript matches the passphrase **and**
+   (when challenging) the code was heard. All must pass.
 
 The voiceprint itself never leaves your machine; everything runs offline
 (unless you use the optional Google fallback for speech-to-text).
@@ -146,8 +167,8 @@ The voiceprint itself never leaves your machine; everything runs offline
 
 ## 6. Tests
 
-The matching and decision logic has a small test suite that runs without a
-microphone or the heavy models:
+The matching, liveness and decision logic has a small test suite that runs
+without a microphone or the heavy models:
 
 ```bash
 python test_logic.py
@@ -160,9 +181,10 @@ python test_logic.py
 Voice biometrics are convenient but weaker than a good password, and you should
 know why before trusting one:
 
-- **It can be spoofed.** A recording of the enrolled person, or a cloned voice,
-  can fool a speaker-verification model. Real systems add *liveness* checks
-  (ask for a random phrase, detect replay) - this prototype does not.
+- **It can still be spoofed.** The `--challenge` liveness code blocks a simple
+  *replayed recording* of a past unlock, but a *real-time* voice clone, or a
+  live person deliberately imitating you, can still fool the speaker model.
+  Strong anti-spoofing needs a dedicated countermeasure model.
 - **Your voice changes.** Colds, stress, and background noise all shift the
   voiceprint, so you may occasionally get a false rejection.
 - **The stored voiceprint is not encrypted.** It sits in `~/.sr_voice_ultron/`
@@ -171,5 +193,5 @@ know why before trusting one:
   that actually matters (banking, your OS login, a server).
 
 Use it to learn, to demo, and to play with - and if you ever want to build on
-it, the honest next steps are liveness detection, encrypted storage, and
-pairing the voice factor with a real secret.
+it, the honest next steps are a dedicated anti-spoofing model, encrypted
+storage, and pairing the voice factor with a real secret.
