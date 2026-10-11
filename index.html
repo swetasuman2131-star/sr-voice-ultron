@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SR Voice Ultron - a voice-sentence lock</title>
+<meta name="description" content="SR Voice Ultron: open a lock by speaking the right sentence in the right voice. Two factors in one action - a passphrase sentence and your voiceprint, with an optional anti-replay liveness code.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root, [data-theme="dark"] {
+    --font-body: 'Space Grotesk', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+    --bg: #0b0f16;
+    --surface: #141a24;
+    --surface2: #1b2330;
+    --surface-elevated: #1e2733;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-bright: rgba(255, 255, 255, 0.16);
+    --text: #e7eef7;
+    --text-dim: #93a2b6;
+    --accent: #6fd0ff;
+    --accent-dim: rgba(111, 208, 255, 0.12);
+    --green: #4ade80;
+    --green-dim: rgba(74, 222, 128, 0.12);
+    --red: #ff8080;
+    --red-dim: rgba(255, 128, 128, 0.12);
+    --amber: #fbbf24;
+    --amber-dim: rgba(251, 191, 36, 0.12);
+    --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  [data-theme="light"] {
+    --bg: #f6f8fb;
+    --surface: #ffffff;
+    --surface2: #eef2f7;
+    --surface-elevated: #ffffff;
+    --border: rgba(0, 0, 0, 0.08);
+    --border-bright: rgba(0, 0, 0, 0.16);
+    --text: #0e1622;
+    --text-dim: #5b6b7f;
+    --accent: #0b74b8;
+    --accent-dim: rgba(11, 116, 184, 0.10);
+    --green: #0f9d58;
+    --green-dim: rgba(15, 157, 88, 0.10);
+    --red: #d64545;
+    --red-dim: rgba(214, 69, 69, 0.10);
+    --amber: #b7791f;
+    --amber-dim: rgba(183, 121, 31, 0.10);
+    --shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    background-image:
+      radial-gradient(ellipse at 15% 0%, var(--accent-dim) 0%, transparent 45%),
+      radial-gradient(ellipse at 90% 10%, var(--green-dim) 0%, transparent 35%),
+      radial-gradient(circle, var(--border) 1px, transparent 1px);
+    background-size: auto, auto, 26px 26px;
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.6;
+    overflow-wrap: break-word;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .reveal { animation: fadeUp 0.5s ease-out both; animation-delay: calc(var(--i, 0) * 0.06s); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* ---------- nav ---------- */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav__inner {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .nav__brand {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    color: var(--text);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .nav__brand .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 10px var(--green);
+    flex-shrink: 0;
+  }
+  .nav__links {
+    display: flex;
+    gap: 18px;
+    margin-left: auto;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .nav__links::-webkit-scrollbar { display: none; }
+  .nav__links a {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .nav__links a:hover { color: var(--accent); text-decoration: none; }
+
+  /* ---------- layout ---------- */
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  section { padding: 64px 0; }
+  section + section { border-top: 1px solid var(--border); }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--accent);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .eyebrow::before {
+    content: '';
+    width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor;
+  }
+
+  h2 {
+    font-size: clamp(24px, 3.4vw, 32px);
+    font-weight: 700;
+    letter-spacing: -0.6px;
+    margin-bottom: 10px;
+    text-wrap: balance;
+  }
+  .section-intro {
+    color: var(--text-dim);
+    font-size: 15px;
+    max-width: 62ch;
+    margin-bottom: 34px;
+  }
+
+  /* ---------- hero ---------- */
+  .hero {
+    padding: 80px 0 72px;
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 48px;
+    align-items: center;
+  }
+  .hero__title {
+    font-size: clamp(38px, 6.4vw, 66px);
+    font-weight: 700;
+    line-height: 1.02;
+    letter-spacing: -2px;
+    margin-bottom: 18px;
+    text-wrap: balance;
+  }
+  .hero__title span { color: var(--accent); }
+  .hero__lead {
+    font-size: 18px;
+    color: var(--text-dim);
+    max-width: 46ch;
+    margin-bottom: 28px;
+  }
+  .hero__lead strong { color: var(--text); font-weight: 600; }
+  .hero__cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 12px 20px;
+    border-radius: 9px;
+    border: 1px solid var(--border-bright);
+    color: var(--text);
+    background: var(--surface);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+  .btn:hover { transform: translateY(-2px); text-decoration: none; border-color: var(--accent); }
+  .btn--primary { background: var(--accent); color: #06121c; border-color: var(--accent); }
+  .btn--primary:hover { border-color: var(--accent); }
+  [data-theme="light"] .btn--primary { color: #ffffff; }
+
+  .hero__badges {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 26px;
+  }
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 4px 9px;
+    border-radius: 6px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+
+  /* ---------- mock readout ---------- */
+  .readout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .readout__bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .readout__bar .lock-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+  .readout__body {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.9;
+    padding: 18px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-dim);
+  }
+  .readout__body .k { color: var(--text); }
+  .readout__body .ok { color: var(--green); }
+  .readout__body .unlock {
+    color: var(--green);
+    font-weight: 600;
+    letter-spacing: 1px;
+  }
+  .readout__body .live { color: var(--amber); }
+
+  /* ---------- cards ---------- */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .grid-2 > *, .grid-3 > * { min-width: 0; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    border-left: 3px solid var(--border-bright);
+  }
+  .card--accent { border-left-color: var(--accent); }
+  .card--green { border-left-color: var(--green); }
+  .card--amber { border-left-color: var(--amber); }
+  .card__label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  .card--accent .card__label { color: var(--accent); }
+  .card--green .card__label { color: var(--green); }
+  .card--amber .card__label { color: var(--amber); }
+  .card__title { font-size: 17px; font-weight: 600; margin-bottom: 7px; }
+  .card__desc { font-size: 13.5px; color: var(--text-dim); }
+
+  /* ---------- pipeline ---------- */
+  .pipeline {
+    display: flex; align-items: stretch; gap: 0;
+    overflow-x: auto; padding-bottom: 8px;
+  }
+  .pipe {
+    flex-shrink: 0;
+    min-width: 150px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .pipe__num {
+    font-family: var(--font-mono);
+    font-size: 10px; font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .pipe__name { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+  .pipe__desc { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+  .pipe--accent { border-color: color-mix(in srgb, var(--border) 40%, var(--accent) 60%); }
+  .pipe--accent .pipe__num { color: var(--accent); }
+  .pipe--green { border-color: color-mix(in srgb, var(--border) 40%, var(--green) 60%); }
+  .pipe--green .pipe__num { color: var(--green); }
+  .pipe--amber { border-color: color-mix(in srgb, var(--border) 40%, var(--amber) 60%); }
+  .pipe--amber .pipe__num { color: var(--amber); }
+  .pipe-arrow {
+    display: flex; align-items: center; padding: 0 6px;
+    color: var(--border-bright); font-size: 17px; flex-shrink: 0;
+  }
+
+  /* ---------- table ---------- */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th {
+    font-family: var(--font-mono);
+    font-size: 10.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-dim);
+    text-align: left;
+    padding: 12px 18px;
+    border-bottom: 2px solid var(--border-bright);
+    white-space: nowrap;
+  }
+  td { padding: 13px 18px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even) { background: var(--accent-dim); }
+  code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    padding: 1.5px 6px;
+    border-radius: 4px;
+  }
+  td code { white-space: nowrap; }
+
+  /* ---------- code block ---------- */
+  .code-file { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .code-file__header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-dim);
+  }
+  .code-file__body {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.7;
+    padding: 18px;
+    background: var(--surface2);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+    color: var(--text);
+  }
+  .code-file__body .c { color: var(--text-dim); }
+  .code-file__body .hl { color: var(--accent); }
+
+  /* ---------- callout ---------- */
+  .callout {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    border-radius: 0 10px 10px 0;
+    padding: 16px 20px;
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+  .callout strong { color: var(--text); font-weight: 600; }
+  .callout--red { border-left-color: var(--red); }
+
+  /* ---------- footer ---------- */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 40px 0 56px;
+  }
+  .footer__inner {
+    display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+    font-size: 13px; color: var(--text-dim);
+  }
+  .footer__inner .mono { font-family: var(--font-mono); font-size: 12px; }
+
+  /* ---------- theme toggle ---------- */
+  .theme-toggle {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px; cursor: pointer; color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .theme-toggle:hover { color: var(--accent); border-color: var(--border-bright); }
+  [data-theme="dark"] .theme-toggle .moon { display: none; }
+  [data-theme="light"] .theme-toggle .sun { display: none; }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; gap: 34px; padding: 52px 0 48px; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    section { padding: 48px 0; }
+    .pipeline { flex-wrap: wrap; gap: 10px; overflow-x: visible; }
+    .pipe { flex: 1 1 100%; min-width: 0; }
+    .pipe-arrow { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav__inner">
+    <div class="nav__brand"><span class="dot"></span>SR VOICE ULTRON</div>
+    <div class="nav__links">
+      <a href="#what">What it is</a>
+      <a href="#how">How it works</a>
+      <a href="#checks">What it checks</a>
+      <a href="#install">Install</a>
+      <a href="#commands">Commands</a>
+      <a href="#limits">Limits</a>
+      <a href="https://github.com/swetasuman2131-star/sr-voice-ultron">GitHub</a>
+    </div>
+    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+      <svg class="sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v2.5M12 20v2.5M4 4l1.8 1.8M18.2 18.2L20 20M1.5 12H4M20 12h2.5M4 20l1.8-1.8M18.2 5.8L20 4"/></svg>
+      <svg class="moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </div>
+</nav>
+
+<!-- ================= HERO ================= -->
+<div class="wrap">
+  <div class="hero">
+    <div class="reveal" style="--i:0">
+      <div class="eyebrow">Voice-sentence lock</div>
+      <h1 class="hero__title">Speak the sentence.<br>Unlock with <span>your voice.</span></h1>
+      <p class="hero__lead">
+        SR Voice Ultron opens only when it hears <strong>the right sentence</strong>
+        <em>and</em> recognises <strong>your voice</strong> saying it - two factors
+        in one action. A random liveness code defeats replayed recordings.
+      </p>
+      <div class="hero__cta">
+        <a class="btn btn--primary" href="#install">Get it running</a>
+        <a class="btn" href="https://github.com/swetasuman2131-star/sr-voice-ultron">View on GitHub</a>
+      </div>
+      <div class="hero__badges">
+        <span class="tag">Python</span>
+        <span class="tag">offline</span>
+        <span class="tag">speaker verification</span>
+        <span class="tag">anti-replay</span>
+        <span class="tag">MIT licence</span>
+      </div>
+    </div>
+
+    <div class="readout reveal" style="--i:1">
+      <div class="readout__bar"><span class="lock-dot"></span>sr_voice_ultron.py &mdash; unlock --challenge</div>
+      <div class="readout__body">Lock is LOCKED. Speak your passphrase.
+<span class="live">  LIVENESS: say these digits: 4 7 1</span>
+--- result ---
+  heard          <span class="k">"the silver fox jumps over the quiet river four seven one"</span>
+  voice match    <span class="k">0.912</span>  <span class="ok">OK</span>
+  sentence match <span class="k">1.000</span>  <span class="ok">OK</span>
+  liveness code  <span class="k">471</span>    <span class="ok">OK</span>
+
+  <span class="unlock">UNLOCKED</span> &mdash; sentence, voice and liveness all match.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= WHAT IT IS ================= -->
+<section id="what">
+  <div class="wrap">
+    <div class="eyebrow reveal" style="--i:0">The idea</div>
+    <h2 class="reveal" style="--i:1">Two locks, one sentence</h2>
+    <p class="section-intro reveal" style="--i:2">
+      A normal voice lock checks one thing. This one checks two at once, so a
+      stolen recording of your words is not enough - the voice has to match too.
+    </p>
+    <div class="grid-2">
+      <div class="card card--accent reveal" style="--i:3">
+        <div class="card__label">Factor 1 &mdash; something you know</div>
+        <div class="card__title">The passphrase sentence</div>
+        <div class="card__desc">
+          Your chosen sentence is transcribed and matched against the enrolled
+          text. Say the wrong words and the lock stays shut, no matter whose
+          voice it is.
+        </div>
+      </div>
+      <div class="card card--green reveal" style="--i:4">
+        <div class="card__label">Factor 2 &mdash; something you are</div>
+        <div class="card__title">Your voiceprint</div>
+        <div class="card__desc">
+          A 256-dimension voice fingerprint is compared to the one captured at
+          enrolment. Right words in the wrong voice are rejected.
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:18px" class="reveal">
+      <div class="card card--amber">
+        <div class="card__label">Optional &mdash; proof of life</div>
+        <div class="card__title">The liveness code</div>
+        <div class="card__desc">
+          With <code>--challenge</code>, a fresh random 3-digit code is shown and
+          must be spoken after the passphrase. A recording of a past unlock
+          cannot know a new code, so replay attacks fail.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOW IT WORKS ================= -->
+<section id="how">
+  <div class="wrap">
+    <div class="eyebrow reveal" style="--i:0">Under the hood</div>
+    <h2 class="reveal" style="--i:1">How it works</h2>
+    <p class="section-intro reveal" style="--i:2">
+      One recording goes through five steps. Every step must pass before the
+      lock opens.
+    </p>
+    <div class="pipeline reveal" style="--i:3">
+      <div class="pipe pipe--accent">
+        <div class="pipe__num">STEP 1</div>
+        <div class="pipe__name">Capture</div>
+        <div class="pipe__desc">16 kHz mono audio from the mic, or a WAV file</div>
+      </div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe pipe--green">
+        <div class="pipe__num">STEP 2</div>
+        <div class="pipe__name">Voiceprint</div>
+        <div class="pipe__desc">Speaker embedding via resemblyzer (256-d)</div>
+      </div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe pipe--accent">
+        <div class="pipe__num">STEP 3</div>
+        <div class="pipe__name">Transcribe</div>
+        <div class="pipe__desc">Offline speech-to-text via faster-whisper</div>
+      </div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe pipe--amber">
+        <div class="pipe__num">STEP 4</div>
+        <div class="pipe__name">Liveness</div>
+        <div class="pipe__desc">Spoken code checked against a fresh challenge</div>
+      </div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe pipe--green">
+        <div class="pipe__num">STEP 5</div>
+        <div class="pipe__name">Decide</div>
+        <div class="pipe__desc">All checks pass &rarr; UNLOCKED, else LOCKED</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= WHAT IT CHECKS ================= -->
+<section id="checks">
+  <div class="wrap">
+    <div class="eyebrow reveal" style="--i:0">Tuning</div>
+    <h2 class="reveal" style="--i:1">What it checks, and how strict</h2>
+    <p class="section-intro reveal" style="--i:2">
+      Two thresholds control strictness. Raise them for a tighter lock, lower
+      them if you are being wrongly rejected.
+    </p>
+    <div class="table-wrap reveal" style="--i:3">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Check</th><th>What it means</th><th>Default</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>--voice-threshold</code></td>
+              <td>Minimum voiceprint similarity to open. Same speaker is usually 0.75-0.95; a different speaker 0.50-0.70.</td>
+              <td><code>0.75</code></td>
+            </tr>
+            <tr>
+              <td><code>--text-threshold</code></td>
+              <td>Minimum sentence similarity. 0.80 tolerates small slips of the tongue.</td>
+              <td><code>0.80</code></td>
+            </tr>
+            <tr>
+              <td><code>--challenge</code></td>
+              <td>Adds the random digit code you must speak after the passphrase.</td>
+              <td><code>on</code> in the GUI</td>
+            </tr>
+            <tr>
+              <td><code>--seconds</code></td>
+              <td>How long each recording lasts.</td>
+              <td><code>4</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= INSTALL ================= -->
+<section id="install">
+  <div class="wrap">
+    <div class="eyebrow reveal" style="--i:0">Get started</div>
+    <h2 class="reveal" style="--i:1">Install and run</h2>
+    <p class="section-intro reveal" style="--i:2">
+      You need Python 3.10+ and a working microphone. Everything runs offline on
+      your machine.
+    </p>
+    <div class="code-file reveal" style="--i:3">
+      <div class="code-file__header">terminal</div>
+      <div class="code-file__body"><span class="c"># 1. get a CPU build of PyTorch</span>
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+<span class="c"># 2. install the rest</span>
+pip install -r requirements.txt
+
+<span class="c"># 3. enrol your voice (speak your sentence 3 times)</span>
+python sr_voice_ultron.py enroll
+
+<span class="c"># 4. open the lock - with the anti-replay code</span>
+python sr_voice_ultron.py <span class="hl">unlock --challenge</span>
+
+<span class="c"># optional: a small on-screen lock window</span>
+python sr_voice_ultron.py gui</div>
+    </div>
+    <p class="section-intro" style="margin-top:20px;margin-bottom:0">
+      No microphone handy? Add <code>--from-file clip.wav</code> to any command
+      and it will read a 16 kHz mono WAV instead.
+    </p>
+  </div>
+</section>
+
+<!-- ================= COMMANDS ================= -->
+<section id="commands">
+  <div class="wrap">
+    <div class="eyebrow reveal" style="--i:0">Reference</div>
+    <h2 class="reveal" style="--i:1">Commands</h2>
+    <p class="section-intro reveal" style="--i:2">
+      Four things you can ask the tool to do.
+    </p>
+    <div class="table-wrap reveal" style="--i:3">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Command</th><th>What it does</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>enroll</code></td>
+              <td>Set up your voice and sentence. Records you several times and stores the voiceprint in <code>~/.sr_voice_ultron/</code>.</td>
+            </tr>
+            <tr>
+              <td><code>unlock</code></td>
+              <td>Try to open the lock. Add <code>--challenge</code> for the liveness code.</td>
+            </tr>
+            <tr>
+              <td><code>status</code></td>
+              <td>Show what is stored - the passphrase, sample count and enrolment date.</td>
+            </tr>
+            <tr>
+              <td><code>gui</code></td>
+              <td>A small window with a LOCKED / UNLOCKED indicator and Unlock / Enrol buttons.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LIMITS ================= -->
+<section id="limits">
+  <div class="wrap">
+    <div class="eyebrow reveal" style="--i:0">Read this first</div>
+    <h2 class="reveal" style="--i:1">Honest limits</h2>
+    <p class="section-intro reveal" style="--i:2">
+      Voice biometrics are convenient but weaker than a good password. Know why
+      before you trust one.
+    </p>
+    <div class="reveal" style="--i:3">
+      <div class="callout callout--red">
+        <strong>It can still be spoofed.</strong> The liveness code blocks a
+        replayed recording, but a real-time voice clone - or a live person
+        imitating you - can still fool the speaker model. Strong anti-spoofing
+        needs a dedicated countermeasure model.
+      </div>
+      <div class="callout">
+        <strong>Your voice changes.</strong> Colds, stress and background noise
+        all shift the voiceprint, so you may occasionally get a false rejection.
+      </div>
+      <div class="callout">
+        <strong>The voiceprint is not encrypted.</strong> It sits in
+        <code>~/.sr_voice_ultron/</code> in plain form. Fine for a home
+        prototype; not for anything sensitive.
+      </div>
+      <div class="callout callout--red">
+        <strong>This is a demo, not access control.</strong> Do not put it in
+        front of anything that actually matters - banking, your OS login, a
+        server.
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap footer__inner">
+    <div>
+      <div class="mono">SR VOICE ULTRON</div>
+      <div style="margin-top:6px">A voice-sentence lock, built as a home prototype.</div>
+    </div>
+    <div style="text-align:right">
+      <div>Author: The new developer SR</div>
+      <div class="mono" style="margin-top:6px">
+        <a href="https://github.com/swetasuman2131-star/sr-voice-ultron">github.com/swetasuman2131-star/sr-voice-ultron</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  function toggleTheme() {
+    var root = document.documentElement;
+    var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+  }
+</script>
+
+</body>
+</html>
