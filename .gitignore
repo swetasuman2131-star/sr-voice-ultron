@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# never commit an enrolled voiceprint
+.sr_voice_ultron/
+*.npz
+*.wav

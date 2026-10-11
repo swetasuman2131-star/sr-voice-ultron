@@ -1,0 +1,16 @@
+# SR Voice Ultron - requirements
+#
+# Install torch first as a CPU wheel (much smaller than the CUDA default):
+#     pip install torch --index-url https://download.pytorch.org/whl/cpu
+# then:
+#     pip install -r requirements.txt
+#
+numpy
+sounddevice        # microphone capture
+soundfile          # read/write WAV files
+resemblyzer        # speaker (voiceprint) embeddings
+faster-whisper     # offline speech-to-text (preferred)
+
+# Optional fallback if you do not want faster-whisper (needs internet, uses
+# Google's Web Speech API):
+# speechrecognition
